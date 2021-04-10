@@ -3,7 +3,7 @@
 import numpy as np
 import sys
 
-gt_file = '/tmp3/shinlee/ammai/hw1/data/test/open_set/labels.txt'
+gt_file = 'data/test/open_set/labels.txt'
 res_file = sys.argv[1]
 thresh = float(sys.argv[2])
 
