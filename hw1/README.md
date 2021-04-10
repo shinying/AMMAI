@@ -1,1 +1,1 @@
-# Face recognition
+# HW1 - Face verification
