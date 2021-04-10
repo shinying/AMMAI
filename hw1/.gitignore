@@ -1,7 +1,10 @@
-data
+data/
 APD*
 
 ckpt*
 result
 
 archived
+
+!facenet/data
+!retinaface/data
