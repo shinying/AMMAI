@@ -1,1 +1,1 @@
-# # # Advanced Topics in Multimedia Analysis and Indexing (Spring 2021)
+# Advanced Topics in Multimedia Analysis and Indexing (Spring 2021)
