@@ -52,13 +52,13 @@ def get_config(dataset):
         config.output = "ckpt3/" + config.output
         config.num_classes = 678
         config.num_image = 13163
-        config.num_epoch = 45
+        config.num_epoch = 50
         config.warmup_epoch = 1
         config.val_split = 0.2
 
         def lr_step_func(epoch):
             return ((epoch + 1) / (4 + 1)) ** 2 if epoch < config.warmup_epoch else 0.1 ** len(
-                [m for m in [30, 38, 43] if m - 1 <= epoch])
+                [m for m in [35, 45, 48] if m - 1 <= epoch])
         config.lr_func = lr_step_func
         
     else:

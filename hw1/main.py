@@ -10,7 +10,7 @@ if __name__ == '__main__':
         os.system("python preprocess.py APD2 retinaface/weights/Resnet50_Final.pth")
         os.system('python train.py APD2')
     elif args.mode == 'closed':
-        os.system('python test_closed.py APD2 weights/arcface_retina_closed')
+        os.system('python test_closed.py APD2 trained_model/arcface_retina_closed')
     elif args.mode == 'open':
-        os.system('python test_open.py APD2 weights/arcface_retina_open')
+        os.system('python test_open.py APD2 trained_model/arcface_retina_open')
         os.system('python score.py results/arcface_retina_open.npy 0.3')
