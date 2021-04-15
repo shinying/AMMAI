@@ -32,13 +32,14 @@ def set_seed(seed=42):
 def main(args, cfg):
     if not os.path.exists(cfg.output):
         os.makedirs(cfg.output)
-    
+
     log_root = logging.getLogger()
     init_logging(log_root, cfg.output)
-    train_loader, val_loader = get_loader(cfg)
-    
+    train_loader, val_loader, mixup_loader = get_loader(cfg)
+    mixup_iter = iter(mixup_loader)
+
     print('Model save at', cfg.output)
-    
+
     backbone = eval("backbones.{}".format(args.network))(
         False, dropout=cfg.dropout, fp16=cfg.fp16).to(args.device)
 
@@ -49,12 +50,12 @@ def main(args, cfg):
             logging.info("backbone resume successfully!")
         except (FileNotFoundError, KeyError, IndexError, RuntimeError):
             logging.info("resume fail, backbone init successfully!")
-            
+
 
     margin_softmax = eval("losses.{}".format(args.loss))()
     module_partial_fc = PartialFC(
-        resume=args.resume, batch_size=cfg.batch_size, margin_softmax=margin_softmax, 
-        num_classes=cfg.num_classes, sample_rate=cfg.sample_rate, 
+        resume=args.resume, batch_size=cfg.batch_size, margin_softmax=margin_softmax,
+        num_classes=cfg.num_classes, sample_rate=cfg.sample_rate,
         embedding_size=cfg.embedding_size, prefix=cfg.output)
 
     opt_backbone = torch.optim.SGD(
@@ -86,11 +87,19 @@ def main(args, cfg):
         module_partial_fc.train()
         pred = []
         gt = []
-        for step, (img, label) in enumerate(train_loader):
-            img = img.to(args.device)
+        for step, (imgs, labels) in enumerate(train_loader):
+            try:
+                mixup_imgs, mixup_labels = next(mixup_iter)
+            except:
+                mixup_iter = iter(mixup_loader)
+                mixup_imgs, mixup_labels = next(mixup_iter)
+
+            imgs = torch.cat([imgs, mixup_imgs, mixup_imgs]).to(args.device)
+
             global_step += 1
-            features = F.normalize(backbone(img))
-            x_grad, loss_v, logits = module_partial_fc.forward_backward(label, features, opt_pfc)
+            features = F.normalize(backbone(imgs))
+            x_grad, loss_v, logits = module_partial_fc.forward_backward(labels, features, opt_pfc,
+                                                                        mixup_labels)
             if cfg.fp16:
                 features.backward(grad_scaler.scale(x_grad))
                 grad_scaler.unscale_(opt_backbone)
@@ -108,29 +117,29 @@ def main(args, cfg):
             opt_pfc.zero_grad()
             loss.update(loss_v, 1)
             callback_logging(global_step, loss, epoch, cfg.fp16, grad_scaler)
-            pred.append(logits.cpu().argmax(dim=1))
-            gt.append(label)
-            
+            pred.append(logits[:len(labels)].cpu().argmax(dim=1))
+            gt.append(labels)
+
         callback_checkpoint(global_step, backbone, module_partial_fc)
         scheduler_backbone.step()
         scheduler_pfc.step()
-        
+
         # Validation
-        if (epoch+1) % 5 == 0: 
+        if (epoch+1) % 5 == 0:
             backbone.eval()
             module_partial_fc.eval()
             loss_all = 0.
             val_acc = 0
             val_size = 0
-            for (img, label) in val_loader:
-                img = img.to(args.device)
+            for (imgs, labels) in val_loader:
+                imgs = imgs.to(args.device)
                 with torch.no_grad():
-                    features = F.normalize(backbone(img))
-                result, loss_v = module_partial_fc.evaluate(label, features)
-                loss_all += loss_v.item() * len(img)
-                val_acc += (result == label.cpu()).sum()
-                val_size += len(img)
-                
+                    features = F.normalize(backbone(imgs))
+                result, loss_v = module_partial_fc.evaluate(labels, features)
+                loss_all += loss_v.item() * len(imgs)
+                val_acc += (result == labels.cpu()).sum()
+                val_size += len(imgs)
+
             train_acc = (torch.cat(pred) == torch.cat(gt)).float().mean()
             logging.info(f"Train acc: {train_acc:.2%}, " +
                          f"Val loss: {loss_all/val_size:.4f}, " +
@@ -139,9 +148,9 @@ def main(args, cfg):
 
 if __name__ == "__main__":
     set_seed()
-    
+
     parser = argparse.ArgumentParser(description='PyTorch ArcFace Training')
-    parser.add_argument('dataset', default='APD2', help='dataset', 
+    parser.add_argument('dataset', default='APD2', help='dataset',
                         choices=['APD', 'APD2', 'APD3'])
     parser.add_argument('--network', type=str, default='iresnet50', help='backbone network')
     parser.add_argument('--loss', type=str, default='ArcFace', help='loss function')
@@ -149,5 +158,5 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda:0')
     args = parser.parse_args()
     cfg = get_config(args.dataset)
-    
+
     main(args, cfg)

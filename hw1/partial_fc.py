@@ -17,7 +17,7 @@ class PartialFC(Module):
     """
 
     @torch.no_grad()
-    def __init__(self, batch_size, resume, margin_softmax, num_classes, 
+    def __init__(self, batch_size, resume, margin_softmax, num_classes,
                  rank=0, local_rank=0, world_size=1, sample_rate=1.0, embedding_size=512, prefix="./"):
         super(PartialFC, self).__init__()
         #
@@ -110,22 +110,23 @@ class PartialFC(Module):
             norm_weight = normalize(self.sub_weight)
             return total_label, norm_weight
 
-    def forward_backward(self, label, features, optimizer):
+    def forward_backward(self, label, features, optimizer, mixup_labels=None):
+        total_label = torch.cat([label, mixup_labels[:,0], mixup_labels[:,1]])
         total_label, norm_weight = self.prepare(label, optimizer)
         total_features = features.data.to(self.device)
         total_features.requires_grad = True
 
         logits = self.forward(total_features, norm_weight)
+        # logits = torch.cat([self.margin_softmax(logits[:len(label)], total_label),
+                            # self.margin_softmax.forward_mixup(logits[len(label):], mixup_labels)])
         logits = self.margin_softmax(logits, total_label)
 
         with torch.no_grad():
             max_fc = torch.max(logits, dim=1, keepdim=True)[0]
-            # dist.all_reduce(max_fc, dist.ReduceOp.MAX)
 
             # calculate exp(logits) and all-reduce
             logits_exp = torch.exp(logits - max_fc)
             logits_sum_exp = logits_exp.sum(dim=1, keepdims=True)
-            # dist.all_reduce(logits_sum_exp, dist.ReduceOp.SUM)
 
             # calculate prob
             logits_exp.div_(logits_sum_exp)
@@ -139,12 +140,33 @@ class PartialFC(Module):
             # calculate loss
             loss = torch.zeros(grad.size()[0], 1, device=grad.device)
             loss[index] = grad[index].gather(1, total_label[index, None])
-            # dist.all_reduce(loss, dist.ReduceOp.SUM)
             loss_v = loss.clamp_min_(1e-30).log_().mean() * (-1)
 
             # calculate grad
             grad[index] -= one_hot
-            grad.div_(self.batch_size * self.world_size)
+            valid_batch_size = self.batch_size - len(mixup_labels)
+            # grad.div_(self.batch_size * self.world_size)
+            grad.div_(valid_batch_size)
+            x = torch.tensor([1]*len(label)+[0.5]*len(mixup_labels)*2, device=grad.device).float().unsqueeze(1)
+            grad = grad * x
+
+
+            # mixup
+            # grad2 = logits_exp[len(label):]
+            # assert grad2.size(0) == mixup_labels.size(0)
+            # half_hot = torch.zeros(size=[mixup_labels.size(0), grad2.size(1)], device=grad2.device)
+            # for i in range(mixup_labels.size(1)):
+            #     half_hot.scatter_(1, mixup_labels[:,i].unsqueeze(1), 1./mixup_labels.size(1))
+
+            # loss2 = torch.zeros(grad2.size(0), 1, device=grad2.device)
+            # loss2 = grad2.gather(1, mixup_labels[:, 0].unsqueeze(1)) + grad2.gather(1, mixup_labels[:, 1].unsqueeze(1))
+            # loss2_v = loss2.clamp_min_(1e-30).log_().mean() * -1
+
+            # grad2 -= half_hot
+            # grad2.div_(len(mixup_labels))
+
+        # grad = torch.cat([grad, grad2])
+        # loss_v = torch.cat([loss, loss2]).clamp_min_(1e-30).log_().mean() * -1
 
         logits.backward(grad)
         if total_features.grad is not None:
@@ -154,22 +176,18 @@ class PartialFC(Module):
         x_grad = x_grad * self.world_size
 
         return x_grad, loss_v, logits
-    
+
     def evaluate(self, label, features):
         total_label = label.to(self.device)
-        norm_weight = normalize(self.sub_weight) 
+        norm_weight = normalize(self.sub_weight)
 
         with torch.no_grad():
             logits = self.forward(features, norm_weight)
-            # logits = self.margin_softmax(logits, total_label)
-            
             max_fc = torch.max(logits, dim=1, keepdim=True)[0]
-            # dist.all_reduce(max_fc, dist.ReduceOp.MAX)
 
             # calculate exp(logits) and all-reduce
             logits_exp = torch.exp(logits - max_fc)
             logits_sum_exp = logits_exp.sum(dim=1, keepdims=True)
-            # dist.all_reduce(logits_sum_exp, dist.ReduceOp.SUM)
 
             # calculate prob
             logits_exp.div_(logits_sum_exp)
@@ -183,14 +201,13 @@ class PartialFC(Module):
             # calculate loss
             loss = torch.zeros(grad.size()[0], 1, device=grad.device)
             loss[index] = grad[index].gather(1, total_label[index, None])
-            # dist.all_reduce(loss, dist.ReduceOp.SUM)
             loss_v = loss.clamp_min_(1e-30).log_().mean() * (-1)
 
         return logits.cpu().argmax(dim=1), loss_v
-    
+
     def predict(self, features):
         norm_weight = normalize(self.sub_weight)
         with torch.no_grad():
             logits = self.forward(features, norm_weight)
-        
+
         return logits.cpu().argmax(dim=1)

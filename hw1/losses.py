@@ -31,3 +31,13 @@ class ArcFace(nn.Module):
         cosine[index] += m_hot
         cosine.cos_().mul_(self.s)
         return cosine
+
+    def forward_mixup(self, cosine, labels):
+        m_hot = torch.zeros_like(cosine)
+        for i in range(labels.size(1)):
+            m_hot.scatter(1, labels[:, i].unsqueeze(1), self.m/labels.size(1))
+        cosine.acos_()
+        cosine += m_hot
+        cosine.cos_().mul_(self.s)
+        return cosine
+
