@@ -21,7 +21,7 @@ A data augmentation technique inspired by [SamplePairing](https://arxiv.org/abs/
 
 The implementation is tested on Asian Politician Dataset (APD). Any image dataset arranged as PyTorch [ImageFolder](https://pytorch.org/vision/stable/datasets.html#imagefolder) format is compatible.
 
-###Quick start
+### Quick start
 
 First rename the dataset to `data/` and put it under  `code/`.
 
